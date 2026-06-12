@@ -176,13 +176,13 @@ GROUP BY 1, 2, 3, 4
 
 
 def _build_vendor_bpm_sql(start_date: date, end_date: date, warehouse: str = "All") -> str:
-    """Build Vendor BPM SQL with parameterized date range and warehouse."""
+    """Build Vendor BPM SQL using bpm.vendor_id directly."""
     date_clause = _bpm_date_filter_clause(start_date, end_date)
     wh_filter = _warehouse_filter_bpm(warehouse)
     return f"""
 SELECT
     pv.vendor_name,
-    pv.vendor_id,
+    bpm.vendor_id,
     'Vendor' AS business_type,
     SUM(CASE WHEN bpm.problem_type = 4 THEN bpm.item_qty ELSE 0 END) AS overage_qty,
     SUM(CASE WHEN bpm.problem_type = 3 THEN bpm.item_qty ELSE 0 END) AS damage_qty,
@@ -191,11 +191,7 @@ SELECT
     SUM(CASE WHEN bpm.problem_type IN (7, 8, 9) THEN bpm.item_qty ELSE 0 END) AS po_qty,
     SUM(CASE WHEN bpm.problem_type = 10 THEN bpm.item_qty ELSE 0 END) AS no_data_qty
 FROM yamibuy_wh.wh_problem_solving_bpm bpm
-LEFT JOIN yamibuy_po.po_purchase_order ppo
-    ON ppo.po_number = (
-        CASE WHEN bpm.reference_id != '' THEN bpm.reference_id ELSE bpm.po_number END
-    )
-LEFT JOIN yamibuy_po.po_vendor pv ON pv.vendor_id = ppo.vendor_id
+LEFT JOIN yamibuy_po.po_vendor pv ON pv.vendor_id = bpm.vendor_id
 WHERE bpm.create_type = 1
   AND bpm.business_type = 1
   AND {date_clause}
@@ -207,13 +203,13 @@ GROUP BY 1, 2, 3
 
 
 def _build_seller_bpm_sql(start_date: date, end_date: date, warehouse: str = "All") -> str:
-    """Build Seller BPM SQL with parameterized date range and warehouse."""
+    """Build Seller BPM SQL using bpm.vendor_id directly."""
     date_clause = _bpm_date_filter_clause(start_date, end_date)
     wh_filter = _warehouse_filter_bpm(warehouse)
     return f"""
 SELECT
     seller.vendor_name,
-    wss.seller_id AS vendor_id,
+    bpm.vendor_id,
     'Seller' AS business_type,
     SUM(CASE WHEN bpm.problem_type = 4 THEN bpm.item_qty ELSE 0 END) AS overage_qty,
     SUM(CASE WHEN bpm.problem_type = 3 THEN bpm.item_qty ELSE 0 END) AS damage_qty,
@@ -222,8 +218,7 @@ SELECT
     SUM(CASE WHEN bpm.problem_type IN (7, 8, 9) THEN bpm.item_qty ELSE 0 END) AS po_qty,
     SUM(CASE WHEN bpm.problem_type = 10 THEN bpm.item_qty ELSE 0 END) AS no_data_qty
 FROM yamibuy_wh.wh_problem_solving_bpm bpm
-LEFT JOIN yamibuy_wh.wh_seller_shipment wss ON wss.shipment_id = bpm.issue_po_number
-LEFT JOIN yamibuy_master.xysc_vendor_info seller ON seller.vendor_id = wss.seller_id
+LEFT JOIN yamibuy_master.xysc_vendor_info seller ON seller.vendor_id = bpm.vendor_id
 WHERE bpm.create_type = 1
   AND bpm.business_type = 5
   AND {date_clause}
@@ -235,18 +230,17 @@ GROUP BY 1, 2, 3
 
 
 def _build_vendor_qc_sql(start_date: date, end_date: date, warehouse: str = "All") -> str:
-    """Build Vendor QC SQL with parameterized date range and warehouse."""
+    """Build Vendor QC SQL using bpm.vendor_id directly."""
     date_clause = _bpm_date_filter_clause(start_date, end_date)
     wh_filter = _warehouse_filter_bpm(warehouse)
     return f"""
 SELECT
     pv.vendor_name,
-    pv.vendor_id,
+    bpm.vendor_id,
     'Vendor' AS business_type,
     SUM(CASE WHEN bpm.comment LIKE '%quality%' THEN bpm.item_qty ELSE 0 END) AS poor_quality_qty
 FROM yamibuy_wh.wh_problem_solving_bpm bpm
-LEFT JOIN yamibuy_po.po_purchase_order ppo ON ppo.po_number = bpm.issue_po_number
-LEFT JOIN yamibuy_po.po_vendor pv ON pv.vendor_id = ppo.vendor_id
+LEFT JOIN yamibuy_po.po_vendor pv ON pv.vendor_id = bpm.vendor_id
 WHERE bpm.create_type = 2
   AND bpm.business_type = 1
   AND bpm.problem_type = 3
@@ -259,18 +253,17 @@ GROUP BY 1, 2, 3
 
 
 def _build_seller_qc_sql(start_date: date, end_date: date, warehouse: str = "All") -> str:
-    """Build Seller QC SQL with parameterized date range and warehouse."""
+    """Build Seller QC SQL using bpm.vendor_id directly."""
     date_clause = _bpm_date_filter_clause(start_date, end_date)
     wh_filter = _warehouse_filter_bpm(warehouse)
     return f"""
 SELECT
     seller.vendor_name,
-    wss.seller_id AS vendor_id,
+    bpm.vendor_id,
     'Seller' AS business_type,
     SUM(CASE WHEN bpm.comment LIKE '%quality%' THEN bpm.item_qty ELSE 0 END) AS poor_quality_qty
 FROM yamibuy_wh.wh_problem_solving_bpm bpm
-LEFT JOIN yamibuy_wh.wh_seller_shipment wss ON wss.shipment_id = bpm.issue_po_number
-LEFT JOIN yamibuy_master.xysc_vendor_info seller ON seller.vendor_id = wss.seller_id
+LEFT JOIN yamibuy_master.xysc_vendor_info seller ON seller.vendor_id = bpm.vendor_id
 WHERE bpm.create_type = 2
   AND bpm.business_type = 5
   AND bpm.problem_type = 3
