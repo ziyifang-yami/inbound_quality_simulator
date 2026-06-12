@@ -19,10 +19,12 @@ from sqlalchemy import create_engine, text
 
 from config import REQUIRED_CSV_COLUMNS
 
-# .env location for database credentials
-ENV_PATH = Path(
-    r"C:\Users\ziyi.fang\OneDrive - YAMIBUY.COM\Documents\Ziyi\Project\config\.env"
-)
+# .env location — try project directory first, fall back to Windows path
+ENV_PATH = Path(__file__).parent / ".env"
+if not ENV_PATH.exists():
+    ENV_PATH = Path(
+        r"C:\Users\ziyi.fang\OneDrive - YAMIBUY.COM\Documents\Ziyi\Project\config\.env"
+    )
 
 
 def _get_engine():
