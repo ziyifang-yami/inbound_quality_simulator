@@ -70,7 +70,7 @@ def compute_scores(
 
     Args:
         df: Input DataFrame with rate columns ({criteria}_rate for criteria 1-9,
-            responsiveness_hours for criteria 10) and a 'business_type' column.
+            responsiveness_days for criteria 10) and a 'business_type' column.
         weights: Nested dict keyed by business type then criteria name.
                  e.g. {'Vendor': {'overage': 15, ...}, 'Seller': {'overage': 10, ...}}
                  Values are percentage points (sum to 100 per business type).
@@ -106,7 +106,7 @@ def compute_scores(
         for criteria in CRITERIA_NAMES:
             # Determine the rate column name
             if criteria == 'responsiveness':
-                rate_col = 'responsiveness_hours'
+                rate_col = 'responsiveness_days'
             else:
                 rate_col = f'{criteria}_rate'
 

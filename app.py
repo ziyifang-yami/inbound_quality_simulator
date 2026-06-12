@@ -189,16 +189,16 @@ if raw_df is not None:
 
 # Human-readable display names for criteria
 CRITERIA_DISPLAY = {
+    "damage": "Defect/Damage",
+    "exp_error": "Expiry/Shelf Life",
     "overage": "Overage",
-    "damage": "Damage",
-    "upc_error": "UPC/Label Error",
-    "exp_error": "Expiration Error",
-    "po_error": "PO/Documentation",
-    "no_data": "Wrong Items (No Data)",
-    "spec_image_error": "Spec/Image Error",
-    "packaging_error": "Packaging Error",
-    "poor_quality": "Poor Quality",
+    "spec_image_error": "Spec/Image",
+    "no_data": "Wrong Items",
+    "upc_error": "Label/Barcode",
+    "packaging_error": "Packaging",
+    "po_error": "Documentation",
     "responsiveness": "Responsiveness",
+    "poor_quality": "QC Quality",
 }
 
 st.sidebar.divider()
@@ -675,8 +675,8 @@ else:
                 criteria_cols = []
                 for criteria in CRITERIA_NAMES:
                     if criteria == "responsiveness":
-                        criteria_cols.append("responsiveness_hours")
-                        rename_map["responsiveness_hours"] = "Responsiveness (hrs)"
+                        criteria_cols.append("responsiveness_days")
+                        rename_map["responsiveness_days"] = "Responsiveness (days)"
                     else:
                         col = f"{criteria}_rate"
                         criteria_cols.append(col)
@@ -696,14 +696,14 @@ else:
                     "spec_image_error": "spec_image_error",
                     "packaging_error": "packaging_error",
                     "poor_quality": "poor_quality_qty",
-                    "responsiveness": "responsiveness_hours",
+                    "responsiveness": "responsiveness_days",
                 }
                 for criteria in CRITERIA_NAMES:
                     col = qty_col_map[criteria]
                     criteria_cols.append(col)
                     display_name = CRITERIA_DISPLAY.get(criteria, criteria)
                     if criteria == "responsiveness":
-                        rename_map[col] = "Responsiveness (hrs)"
+                        rename_map[col] = "Responsiveness (days)"
                     else:
                         rename_map[col] = f"{display_name} (qty)"
 

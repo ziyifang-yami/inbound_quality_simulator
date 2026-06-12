@@ -277,6 +277,33 @@ GROUP BY 1, 2, 3
 """
 
 
+def _build_seller_responsiveness_sql(start_date: date, end_date: date, warehouse: str = "All") -> str:
+    """
+    Build Seller Responsiveness SQL — average hours from BPM creation to processing.
+    Uses TIMESTAMPDIFF(HOUR, FROM_UNIXTIME(in_dtm), FROM_UNIXTIME(edit_dtm)).
+    Only counts tickets where edit_dtm > in_dtm (i.e., actually processed).
+    """
+    date_clause = _bpm_date_filter_clause(start_date, end_date)
+    wh_filter = _warehouse_filter_bpm(warehouse)
+    return f"""
+SELECT
+    bpm.vendor_id,
+    seller.vendor_name,
+    'Seller' AS business_type,
+    AVG(TIMESTAMPDIFF(HOUR, FROM_UNIXTIME(bpm.in_dtm), FROM_UNIXTIME(bpm.edit_dtm))) AS responsiveness_hours
+FROM yamibuy_wh.wh_problem_solving_bpm bpm
+LEFT JOIN yamibuy_master.xysc_vendor_info seller ON seller.vendor_id = bpm.vendor_id
+WHERE bpm.business_type = 5
+  AND bpm.create_type = 1
+  AND bpm.edit_dtm > bpm.in_dtm
+  AND {date_clause}
+  {wh_filter}
+  AND seller.vendor_name IS NOT NULL
+  AND seller.vendor_name NOT LIKE '%测试%'
+GROUP BY 1, 2, 3
+"""
+
+
 # ---------------------------------------------------------------------------
 # Data Loading Functions
 # ---------------------------------------------------------------------------
@@ -309,8 +336,17 @@ def _load_qc_data(engine, start_date: date, end_date: date, warehouse: str = "Al
     return df
 
 
+def _load_responsiveness_data(engine, start_date: date, end_date: date, warehouse: str = "All") -> pd.DataFrame:
+    """Load Seller responsiveness (avg processing hours). Vendors default to 0."""
+    with engine.connect() as conn:
+        seller_resp = pd.read_sql(
+            text(_build_seller_responsiveness_sql(start_date, end_date, warehouse)), conn
+        )
+    return seller_resp
+
+
 def _compute_rates(inbound_df: pd.DataFrame, bpm_df: pd.DataFrame,
-                   qc_df: pd.DataFrame) -> pd.DataFrame:
+                   qc_df: pd.DataFrame, resp_df: pd.DataFrame = None) -> pd.DataFrame:
     """
     Merge inbound volume with BPM and QC data, then compute error rates.
 
@@ -386,9 +422,9 @@ def _compute_rates(inbound_df: pd.DataFrame, bpm_df: pd.DataFrame,
     df["spec_image_error_rate"] = (df["spec_image_error"] / sku_qty).fillna(0)
     df["packaging_error_rate"] = (df["packaging_error"] / sku_qty).fillna(0)
 
-    # Responsiveness is not available from DB queries (sourced from BPM Dashboard)
-    # Default to 0 hours — will be populated separately if available
-    df["responsiveness_hours"] = 0.0
+    # Responsiveness: average days from BPM creation to last edit (Seller only)
+    # Vendor defaults to 0 (this criteria has 0% weight for Vendors)
+    df["responsiveness_days"] = 0.0
 
     return df
 
@@ -411,7 +447,7 @@ def _select_output_columns(df: pd.DataFrame) -> pd.DataFrame:
         "spec_image_error_rate",
         "packaging_error_rate",
         "poor_quality_rate",
-        "responsiveness_hours",
+        "responsiveness_days",
         # Raw numerator columns for "Actual Cases" display mode
         "overage_qty",
         "damage_qty",
@@ -467,6 +503,33 @@ def load_data_from_db(
 
     # Merge and compute rates
     df = _compute_rates(inbound_df, bpm_df, qc_df)
+
+    # Load Seller responsiveness: avg days from BPM creation to edit (Seller only)
+    wh_filter = _warehouse_filter_bpm(warehouse)
+    resp_sql = f"""
+    SELECT bpm.vendor_id,
+           AVG(TIMESTAMPDIFF(HOUR, FROM_UNIXTIME(bpm.in_dtm), FROM_UNIXTIME(bpm.edit_dtm)) / 24.0) AS avg_days
+    FROM yamibuy_wh.wh_problem_solving_bpm bpm
+    WHERE bpm.business_type = 5
+      AND bpm.create_type = 1
+      AND bpm.edit_dtm > bpm.in_dtm
+      AND bpm.in_dtm >= UNIX_TIMESTAMP('{start_date.isoformat()}')
+      AND bpm.in_dtm < UNIX_TIMESTAMP('{end_date.isoformat()}')
+      {wh_filter}
+      AND bpm.vendor_id IS NOT NULL AND bpm.vendor_id != 0
+    GROUP BY bpm.vendor_id
+    """
+    try:
+        with engine.connect() as conn:
+            resp_df = pd.read_sql(text(resp_sql), conn)
+        if not resp_df.empty:
+            resp_map = resp_df.set_index("vendor_id")["avg_days"]
+            seller_mask = df["business_type"] == "Seller"
+            df.loc[seller_mask, "responsiveness_days"] = (
+                df.loc[seller_mask, "vendor_id"].map(resp_map).fillna(0)
+            )
+    except Exception:
+        pass  # Keep default 0 if query fails
 
     # Select final output columns
     df = _select_output_columns(df)
