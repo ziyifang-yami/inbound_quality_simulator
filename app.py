@@ -7,6 +7,7 @@ sidebar to simulate the impact of scoring policy changes.
 """
 
 import copy
+import os
 from datetime import date, timedelta
 
 import streamlit as st
@@ -42,6 +43,34 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+# ---------------------------------------------------------------------------
+# Simple Password Protection
+# ---------------------------------------------------------------------------
+
+def _check_password():
+    """Show a login form and return True if password is correct."""
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.title("🔒 Inbound Quality Score Simulator")
+    password = st.text_input("Enter password to access:", type="password", key="login_pw")
+    if st.button("Login"):
+        # Load password from .env (via python-dotenv) or fall back to default
+        from dotenv import load_dotenv
+        load_dotenv()
+        correct_pw = os.environ.get("APP_PASSWORD", "yamibuy2025")
+        if password == correct_pw:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("❌ Incorrect password")
+    return False
+
+
+if not _check_password():
+    st.stop()
 
 
 # ---------------------------------------------------------------------------
