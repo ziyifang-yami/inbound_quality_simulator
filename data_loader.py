@@ -29,7 +29,9 @@ if not ENV_PATH.exists():
 
 def _get_engine():
     """Create SQLAlchemy engine from .env credentials."""
-    load_dotenv(dotenv_path=ENV_PATH)
+    # Load from both project .env and OneDrive fallback (override=True to ensure DB creds load)
+    load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+    load_dotenv(dotenv_path=ENV_PATH, override=True)
     user = os.getenv("MYSQL_USER")
     password = os.getenv("MYSQL_PASS")
     host = os.getenv("MYSQL_HOST")
@@ -547,4 +549,100 @@ def load_data(
 
     # No CSV provided — load from database
     df = load_data_from_db(start_date=start_date, end_date=end_date, warehouse=warehouse)
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Inactive Vendors/Sellers Query
+# ---------------------------------------------------------------------------
+
+
+def load_inactive_vendors(
+    start_date: date | None = None,
+    end_date: date | None = None,
+    warehouse: str = "All",
+) -> pd.DataFrame:
+    """
+    Load vendors/sellers that had PO activity in the past year but
+    NO inbound receiving in the scoring window (start_date to end_date).
+
+    Definition of "inactive":
+    - Vendor: Has a po_purchase_order created in the past 12 months,
+      but zero wh_inbound_batch records in the scoring window.
+    - Seller: Has a wh_seller_shipment created in the past 12 months,
+      but zero wh_inbound_batch records in the scoring window.
+
+    Returns DataFrame with columns: vendor_id, vendor_name, business_type,
+    last_po_date (most recent PO/shipment date).
+    """
+    if end_date is None:
+        end_date = date.today()
+    if start_date is None:
+        start_date = end_date - timedelta(days=180)
+
+    # "Past year" = 12 months before end_date
+    one_year_ago = end_date - timedelta(days=365)
+
+    wh_filter_inbound = _warehouse_filter_inbound(warehouse)
+    wh_filter_bpm = _warehouse_filter_bpm(warehouse)
+
+    # Vendors with PO in past year but no inbound in scoring window
+    vendor_sql = f"""
+    SELECT pv.vendor_id, pv.vendor_name, 'Vendor' AS business_type,
+           MAX(ppo.in_dtm) AS last_po_date
+    FROM yamibuy_po.po_purchase_order ppo
+    JOIN yamibuy_po.po_vendor pv ON pv.vendor_id = ppo.vendor_id
+    WHERE ppo.po_number NOT LIKE 'F%'
+      AND ppo.in_dtm >= '{one_year_ago.isoformat()}'
+      AND ppo.in_dtm < '{end_date.isoformat()}'
+      AND pv.vendor_name IS NOT NULL
+      AND pv.vendor_name NOT LIKE '%测试%'
+      AND pv.vendor_id NOT IN (
+          SELECT DISTINCT ppo2.vendor_id
+          FROM yamibuy_wh.wh_inbound_batch ibb
+          JOIN yamibuy_wh.wh_inbound ib ON ib.inbound_number = ibb.inbound_number
+          JOIN yamibuy_po.po_purchase_order ppo2 ON ppo2.po_number = ib.reference_id
+          WHERE ib.reference_id NOT LIKE 'F%'
+            AND ibb.item_number NOT LIKE '8%'
+            AND ibb.in_dtm >= UNIX_TIMESTAMP('{start_date.isoformat()}')
+            AND ibb.in_dtm < UNIX_TIMESTAMP('{end_date.isoformat()}')
+            {wh_filter_inbound}
+      )
+    GROUP BY pv.vendor_id, pv.vendor_name
+    """
+
+    # Sellers with shipment in past year but no inbound in scoring window
+    seller_sql = f"""
+    SELECT wss.seller_id AS vendor_id, seller.vendor_name, 'Seller' AS business_type,
+           MAX(wss.in_dtm) AS last_po_date
+    FROM yamibuy_wh.wh_seller_shipment wss
+    JOIN yamibuy_master.xysc_vendor_info seller ON seller.vendor_id = wss.seller_id
+    WHERE wss.in_dtm >= '{one_year_ago.isoformat()}'
+      AND wss.in_dtm < '{end_date.isoformat()}'
+      AND seller.vendor_name IS NOT NULL
+      AND seller.vendor_name NOT LIKE '%测试%'
+      AND wss.seller_id NOT IN (
+          SELECT DISTINCT wss2.seller_id
+          FROM yamibuy_wh.wh_inbound_batch ibb
+          JOIN yamibuy_wh.wh_inbound ib ON ib.inbound_number = ibb.inbound_number
+          JOIN yamibuy_wh.wh_seller_shipment wss2 ON wss2.shipment_id = ib.reference_id
+          WHERE ib.reference_id LIKE 'F%'
+            AND ibb.in_dtm >= UNIX_TIMESTAMP('{start_date.isoformat()}')
+            AND ibb.in_dtm < UNIX_TIMESTAMP('{end_date.isoformat()}')
+            {wh_filter_inbound}
+      )
+    GROUP BY wss.seller_id, seller.vendor_name
+    """
+
+    engine = _get_engine()
+    with engine.connect() as conn:
+        vendor_df = pd.read_sql(text(vendor_sql), conn)
+        seller_df = pd.read_sql(text(seller_sql), conn)
+
+    df = pd.concat([vendor_df, seller_df], ignore_index=True)
+
+    if not df.empty:
+        df["vendor_id"] = df["vendor_id"].astype(int)
+        df["last_po_date"] = pd.to_datetime(df["last_po_date"])
+
     return df

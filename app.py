@@ -27,7 +27,7 @@ from validators import (
     validate_thresholds,
     validate_tier_boundaries,
 )
-from data_loader import load_data
+from data_loader import load_data, load_inactive_vendors
 from impact import analyze_impact
 from exporter import export_csv, export_google_sheet
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
@@ -55,9 +55,10 @@ def _check_password():
         return True
 
     st.title("🔒 Inbound Quality Score Simulator")
-    password = st.text_input("Enter password to access:", type="password", key="login_pw")
-    if st.button("Login"):
-        # Load password from .env (via python-dotenv) or fall back to default
+    with st.form("login_form"):
+        password = st.text_input("Enter password to access:", type="password")
+        submitted = st.form_submit_button("Login")
+    if submitted:
         from dotenv import load_dotenv
         load_dotenv()
         correct_pw = os.environ.get("APP_PASSWORD", "yamibuy2025")
@@ -498,8 +499,8 @@ else:
     filtered_df = _apply_filters(st.session_state.current_df)
 
     # Create tabs for the main dashboard
-    tab_overview, tab_detail, tab_comparison, tab_impact, tab_export = st.tabs(
-        ["Overview", "Detail", "Comparison", "Impact Analysis", "Export"]
+    tab_overview, tab_detail, tab_comparison, tab_impact, tab_inactive, tab_export = st.tabs(
+        ["Overview", "Detail", "Comparison", "Impact Analysis", "Inactive", "Export"]
     )
 
     # -------------------------------------------------------------------
@@ -967,6 +968,73 @@ else:
                     "direction": "Change",
                 },
             )
+
+    with tab_inactive:
+        st.header("Inactive Vendors/Sellers")
+        st.caption(
+            "**Definition:** Had PO/shipment activity in the past 12 months, "
+            "but **zero inbound receiving** during the current scoring window. "
+            "These vendors/sellers are not included in tier scoring."
+        )
+
+        # Load inactive data (uses same date range and warehouse scope)
+        try:
+            inactive_df = load_inactive_vendors(
+                start_date=st.session_state.get("date_start"),
+                end_date=st.session_state.get("date_end"),
+                warehouse=st.session_state.filters.get("warehouse", "All"),
+            )
+
+            if inactive_df.empty:
+                st.info("No inactive vendors/sellers found for the current parameters.")
+            else:
+                # Summary metrics
+                vendor_count = len(inactive_df[inactive_df["business_type"] == "Vendor"])
+                seller_count = len(inactive_df[inactive_df["business_type"] == "Seller"])
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Inactive", len(inactive_df))
+                with col2:
+                    st.metric("Vendors", vendor_count)
+                with col3:
+                    st.metric("Sellers", seller_count)
+
+                # Filter by business type
+                btype_filter = st.radio(
+                    "Show:",
+                    options=["All", "Vendor", "Seller"],
+                    horizontal=True,
+                    key="inactive_btype_filter",
+                )
+
+                display_inactive = inactive_df.copy()
+                if btype_filter != "All":
+                    display_inactive = display_inactive[
+                        display_inactive["business_type"] == btype_filter
+                    ]
+
+                # Format and display
+                display_inactive = display_inactive.rename(columns={
+                    "vendor_id": "ID",
+                    "vendor_name": "Name",
+                    "business_type": "Type",
+                    "last_po_date": "Last PO/Shipment Date",
+                })
+
+                display_inactive = display_inactive.sort_values(
+                    "Last PO/Shipment Date", ascending=False
+                )
+
+                st.dataframe(
+                    display_inactive,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=500,
+                )
+
+        except Exception as e:
+            st.error(f"Failed to load inactive data: {e}")
 
     with tab_export:
         st.header("Export")
