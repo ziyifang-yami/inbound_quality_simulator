@@ -1,0 +1,12 @@
+streamlit
+pandas
+numpy
+plotly
+sqlalchemy
+pymysql
+python-dotenv
+hypothesis
+pytest
+gspread
+oauth2client
+streamlit-aggrid
