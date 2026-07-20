@@ -534,6 +534,20 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
     """
     df["pm_am"] = ""
 
+    def _normalize_am_name(name):
+        """Normalize AM name to first-name only, lowercase.
+        'jax.qian' → 'jax', 'irene.yu' → 'irene', 'Celia.Liang' → 'celia'
+        """
+        if not name or not isinstance(name, str):
+            return ""
+        name = name.strip().lower()
+        name = name.split("@")[0]
+        if "." in name:
+            return name.split(".")[0]
+        elif " " in name:
+            return name.split(" ")[0]
+        return name
+
     with engine.connect() as conn:
         # --- Vendor PM (domain-aware) ---
         vendor_ids = df.loc[df["business_type"] == "Vendor", "vendor_id"].unique()
@@ -658,7 +672,7 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
                 sid_rows = am_df[am_df["seller_id"] == sid]
                 if sid_rows.empty:
                     continue
-                am_name = sid_rows.iloc[0]["am_name"]
+                am_name = _normalize_am_name(sid_rows.iloc[0]["am_name"])
                 df.loc[seller_mask & (df["vendor_id"] == sid), "pm_am"] = am_name
 
     return df
