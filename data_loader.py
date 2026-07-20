@@ -595,10 +595,43 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
                 df.loc[no_pm_mask & (df["team"] == "Non-food"), "pm_am"] = "jillian.ji"
                 df.loc[no_pm_mask & (df["team"] == "Other"), "pm_am"] = "janelle.zhang"
 
-    # --- Seller AM (Athena live query with CSV cache fallback) ---
+    # --- Seller AM (from Athena dwb_bi_vendor_region_info — same source as Tableau) ---
     seller_ids = df.loc[df["business_type"] == "Seller", "vendor_id"].unique()
     if len(seller_ids) > 0:
-        am_df = _load_seller_am_from_athena()
+        try:
+            from pyathena import connect as athena_connect
+            import boto3
+
+            session = boto3.Session(profile_name="prod-ziyi.fang-406921510350")
+            credentials = session.get_credentials().get_frozen_credentials()
+            athena_conn = athena_connect(
+                aws_access_key_id=credentials.access_key,
+                aws_secret_access_key=credentials.secret_key,
+                aws_session_token=credentials.token,
+                region_name=os.getenv("ATHENA_REGION", "us-west-2"),
+                work_group=os.getenv("ATHENA_WORK_GROUP", "ziyi.fang"),
+                s3_staging_dir=os.getenv("ATHENA_S3_STAGING", "s3://aws-athena-query-results-us-west-2-654654218498/"),
+            )
+            am_df = pd.read_sql("""
+                SELECT CAST(vendor_id AS INTEGER) AS seller_id,
+                       lower(trim("2024_am")) AS am_name
+                FROM dwb_bi.dwb_bi_vendor_region_info
+                WHERE "2024_am" IS NOT NULL AND trim("2024_am") != ''
+            """, athena_conn)
+
+            # Cache to local CSV
+            cache_dir = Path(__file__).parent / "cache"
+            cache_dir.mkdir(exist_ok=True)
+            am_df.to_csv(cache_dir / "seller_am.csv", index=False)
+
+        except Exception:
+            # Fallback to cached CSV
+            cache_file = Path(__file__).parent / "cache" / "seller_am.csv"
+            if cache_file.exists():
+                am_df = pd.read_csv(cache_file)
+            else:
+                am_df = pd.DataFrame(columns=["seller_id", "am_name"])
+
         if not am_df.empty:
             am_df = am_df.dropna(subset=["seller_id", "am_name"])
             am_df["seller_id"] = am_df["seller_id"].astype(int)
@@ -607,8 +640,7 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
                 sid_rows = am_df[am_df["seller_id"] == sid]
                 if sid_rows.empty:
                     continue
-                # Pick the first AM name
-                am_name = sorted(sid_rows["am_name"].unique())[0]
+                am_name = sid_rows.iloc[0]["am_name"]
                 df.loc[seller_mask & (df["vendor_id"] == sid), "pm_am"] = am_name
 
     return df
