@@ -595,7 +595,7 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
                 df.loc[no_pm_mask & (df["team"] == "Non-food"), "pm_am"] = "jillian.ji"
                 df.loc[no_pm_mask & (df["team"] == "Other"), "pm_am"] = "janelle.zhang"
 
-    # --- Seller AM (from Athena dwb_bi_vendor_region_info — same source as Tableau) ---
+    # --- Seller AM (from Athena dwb_bi_vendor_region_info + admin_seller fallback) ---
     seller_ids = df.loc[df["business_type"] == "Seller", "vendor_id"].unique()
     if len(seller_ids) > 0:
         try:
@@ -612,12 +612,30 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
                 work_group=os.getenv("ATHENA_WORK_GROUP", "ziyi.fang"),
                 s3_staging_dir=os.getenv("ATHENA_S3_STAGING", "s3://aws-athena-query-results-us-west-2-654654218498/"),
             )
+
+            # Primary source: dwb_bi_vendor_region_info (same as Tableau)
             am_df = pd.read_sql("""
                 SELECT CAST(vendor_id AS INTEGER) AS seller_id,
                        lower(trim("2024_am")) AS am_name
                 FROM dwb_bi.dwb_bi_vendor_region_info
                 WHERE "2024_am" IS NOT NULL AND trim("2024_am") != ''
             """, athena_conn)
+
+            # Fallback source: admin_seller (active AMs only, for sellers not in dwb_bi)
+            admin_am_df = pd.read_sql("""
+                SELECT CAST(a.seller_id AS INTEGER) AS seller_id,
+                       lower(trim(u.user_name)) AS am_name
+                FROM yamibuy_central.admin_seller a
+                JOIN yamibuy_master.xysc_admin_user u ON u.user_id = a.user_id
+                WHERE u.is_active = 1
+            """, athena_conn)
+
+            # Merge: use dwb_bi as primary, admin_seller fills gaps
+            # For admin_seller, deduplicate by taking first AM per seller
+            admin_am_dedup = admin_am_df.drop_duplicates(subset=["seller_id"], keep="first")
+            # Only keep sellers NOT already in dwb_bi
+            gap_sellers = admin_am_dedup[~admin_am_dedup["seller_id"].isin(am_df["seller_id"])]
+            am_df = pd.concat([am_df, gap_sellers], ignore_index=True)
 
             # Cache to local CSV
             cache_dir = Path(__file__).parent / "cache"
