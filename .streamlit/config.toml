@@ -1,0 +1,8 @@
+[server]
+port = 8503
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+# Visual identifier: DASHBOARD VERSION (read-only, no password)

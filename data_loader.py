@@ -480,6 +480,20 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
     """
     df["pm_am"] = ""
 
+    def _normalize_am_name(name):
+        """Normalize AM name to first-name only, lowercase.
+        'jax.qian' → 'jax', 'irene.yu' → 'irene', 'Celia.Liang' → 'celia'
+        """
+        if not name or not isinstance(name, str):
+            return ""
+        name = name.strip().lower()
+        name = name.split("@")[0]
+        if "." in name:
+            return name.split(".")[0]
+        elif " " in name:
+            return name.split(" ")[0]
+        return name
+
     with engine.connect() as conn:
         # --- Vendor PM (domain-aware) ---
         vendor_ids = df.loc[df["business_type"] == "Vendor", "vendor_id"].unique()
@@ -545,7 +559,7 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
                 sid_rows = am_df[am_df["seller_id"] == sid]
                 if sid_rows.empty:
                     continue
-                am_name = sid_rows.iloc[0]["am_name"]
+                am_name = _normalize_am_name(sid_rows.iloc[0]["am_name"])
                 df.loc[seller_mask & (df["vendor_id"] == sid), "pm_am"] = am_name
 
     return df
@@ -624,6 +638,32 @@ def load_data_from_db(
         df = _load_owner_info(engine, df)
     except Exception:
         df["pm_am"] = ""
+
+    # Load active status (Vendor: po_vendor.status='A', Seller: xysc_vendor_info.is_active=1)
+    df["is_active"] = False
+    try:
+        with engine.connect() as conn:
+            # Vendor active status
+            vendor_active = pd.read_sql(text(
+                "SELECT vendor_id, (status = 'A') AS active FROM yamibuy_po.po_vendor"
+            ), conn)
+            vendor_mask = df["business_type"] == "Vendor"
+            active_map = vendor_active.set_index("vendor_id")["active"]
+            df.loc[vendor_mask, "is_active"] = (
+                df.loc[vendor_mask, "vendor_id"].map(active_map).fillna(False).astype(bool)
+            )
+
+            # Seller active status
+            seller_active = pd.read_sql(text(
+                "SELECT vendor_id, (is_active = 1) AS active FROM yamibuy_master.xysc_vendor_info"
+            ), conn)
+            seller_mask = df["business_type"] == "Seller"
+            active_map_s = seller_active.set_index("vendor_id")["active"]
+            df.loc[seller_mask, "is_active"] = (
+                df.loc[seller_mask, "vendor_id"].map(active_map_s).fillna(False).astype(bool)
+            )
+    except Exception:
+        df["is_active"] = True  # Default to showing all if query fails
 
     # Ensure proper types
     df["vendor_id"] = df["vendor_id"].astype(int)

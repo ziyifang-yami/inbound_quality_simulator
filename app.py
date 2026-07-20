@@ -362,7 +362,7 @@ else:
             st.info("No records match the current filter criteria.")
         else:
             # Search bars and display mode on the same row
-            search_id_col, search_name_col, search_pm_col, mode_col = st.columns([1, 2, 1.5, 3])
+            search_id_col, search_name_col, active_col, search_pm_col, mode_col = st.columns([1, 1.5, 0.7, 1.5, 3])
             with search_id_col:
                 search_id = st.text_input(
                     "Vendor/Seller ID",
@@ -375,6 +375,9 @@ else:
                     placeholder="Partial name...",
                     key="detail_search_name",
                 )
+            with active_col:
+                st.markdown("<div style='padding-top:32px'></div>", unsafe_allow_html=True)
+                active_only = st.checkbox("Active only", value=True, key="detail_active_only")
             with search_pm_col:
                 # Build PM/AM dropdown from available data
                 pm_am_options = ["All"] + sorted(
@@ -387,8 +390,7 @@ else:
                     key="detail_filter_pm_am",
                 )
             with mode_col:
-                st.write("")  # spacing to align
-                st.write("")  # extra spacing
+                st.markdown("<div style='padding-top:28px'></div>", unsafe_allow_html=True)
                 display_mode = st.radio(
                     "mode",
                     options=["Score", "Percentage", "Actual Cases"],
@@ -399,6 +401,10 @@ else:
 
             # Apply search filters
             display_filtered_df = filtered_df.copy()
+            if active_only:
+                display_filtered_df = display_filtered_df[
+                    display_filtered_df["is_active"] == True
+                ]
             if search_id:
                 display_filtered_df = display_filtered_df[
                     display_filtered_df["vendor_id"].astype(str) == search_id.strip()
