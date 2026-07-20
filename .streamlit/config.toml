@@ -1,0 +1,8 @@
+[server]
+port = 8502
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+# Visual identifier: FULL VERSION (main branch, with password + editable weights)

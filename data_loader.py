@@ -190,7 +190,7 @@ SELECT
     SUM(CASE WHEN bpm.problem_type = 3 THEN bpm.item_qty ELSE 0 END) AS damage_qty,
     SUM(CASE WHEN bpm.problem_type IN (5, 6) THEN bpm.item_qty ELSE 0 END) AS upc_qty,
     SUM(CASE WHEN bpm.problem_type IN (1, 2) THEN bpm.item_qty ELSE 0 END) AS exp_qty,
-    SUM(CASE WHEN bpm.problem_type IN (7, 8, 9) THEN bpm.item_qty ELSE 0 END) AS po_qty,
+    SUM(CASE WHEN bpm.problem_type IN (7, 8, 9) THEN 1 ELSE 0 END) AS po_qty,
     SUM(CASE WHEN bpm.problem_type = 10 THEN bpm.item_qty ELSE 0 END) AS no_data_qty
 FROM yamibuy_wh.wh_problem_solving_bpm bpm
 LEFT JOIN yamibuy_po.po_vendor pv ON pv.vendor_id = bpm.vendor_id
@@ -217,7 +217,7 @@ SELECT
     SUM(CASE WHEN bpm.problem_type = 3 THEN bpm.item_qty ELSE 0 END) AS damage_qty,
     SUM(CASE WHEN bpm.problem_type IN (5, 6) THEN bpm.item_qty ELSE 0 END) AS upc_qty,
     SUM(CASE WHEN bpm.problem_type IN (1, 2) THEN bpm.item_qty ELSE 0 END) AS exp_qty,
-    SUM(CASE WHEN bpm.problem_type IN (7, 8, 9) THEN bpm.item_qty ELSE 0 END) AS po_qty,
+    SUM(CASE WHEN bpm.problem_type IN (7, 8, 9) THEN 1 ELSE 0 END) AS po_qty,
     SUM(CASE WHEN bpm.problem_type = 10 THEN bpm.item_qty ELSE 0 END) AS no_data_qty
 FROM yamibuy_wh.wh_problem_solving_bpm bpm
 LEFT JOIN yamibuy_master.xysc_vendor_info seller ON seller.vendor_id = bpm.vendor_id
@@ -240,12 +240,12 @@ SELECT
     pv.vendor_name,
     bpm.vendor_id,
     'Vendor' AS business_type,
-    SUM(CASE WHEN bpm.comment LIKE '%quality%' THEN bpm.item_qty ELSE 0 END) AS poor_quality_qty
+    SUM(CASE WHEN bpm.comment LIKE '%poor quality%' THEN bpm.item_qty ELSE 0 END) AS poor_quality_qty
 FROM yamibuy_wh.wh_problem_solving_bpm bpm
 LEFT JOIN yamibuy_po.po_vendor pv ON pv.vendor_id = bpm.vendor_id
 WHERE bpm.create_type = 2
   AND bpm.business_type = 1
-  AND bpm.problem_type = 3
+  AND bpm.problem_type IN (3, 6)
   AND {date_clause}
   {wh_filter}
   AND pv.vendor_name IS NOT NULL
@@ -263,12 +263,12 @@ SELECT
     seller.vendor_name,
     bpm.vendor_id,
     'Seller' AS business_type,
-    SUM(CASE WHEN bpm.comment LIKE '%quality%' THEN bpm.item_qty ELSE 0 END) AS poor_quality_qty
+    SUM(CASE WHEN bpm.comment LIKE '%poor quality%' THEN bpm.item_qty ELSE 0 END) AS poor_quality_qty
 FROM yamibuy_wh.wh_problem_solving_bpm bpm
 LEFT JOIN yamibuy_master.xysc_vendor_info seller ON seller.vendor_id = bpm.vendor_id
 WHERE bpm.create_type = 2
   AND bpm.business_type = 5
-  AND bpm.problem_type = 3
+  AND bpm.problem_type IN (3, 6)
   AND {date_clause}
   {wh_filter}
   AND seller.vendor_name IS NOT NULL
@@ -409,16 +409,17 @@ def _compute_rates(inbound_df: pd.DataFrame, bpm_df: pd.DataFrame,
     # Compute rates — criteria 1-6, 9 use qty_received as denominator
     # Handle division by zero: if qty_received is 0, rate stays 0
     qty = df["qty_received"].replace(0, pd.NA)
+    # Criteria 7-8 and po_error use po_sku_received as denominator
+    sku_qty = df["po_sku_received"].replace(0, pd.NA)
+
     df["overage_rate"] = (df["overage_qty"] / qty).fillna(0)
     df["damage_rate"] = (df["damage_qty"] / qty).fillna(0)
     df["upc_error_rate"] = (df["upc_qty"] / qty).fillna(0)
     df["exp_error_rate"] = (df["exp_qty"] / qty).fillna(0)
-    df["po_error_rate"] = (df["po_qty"] / qty).fillna(0)
+    df["po_error_rate"] = (df["po_qty"] / sku_qty).fillna(0)
     df["no_data_rate"] = (df["no_data_qty"] / qty).fillna(0)
     df["poor_quality_rate"] = (df["poor_quality_qty"] / qty).fillna(0)
 
-    # Criteria 7-8 use po_sku_received as denominator
-    sku_qty = df["po_sku_received"].replace(0, pd.NA)
     df["spec_image_error_rate"] = (df["spec_image_error"] / sku_qty).fillna(0)
     df["packaging_error_rate"] = (df["packaging_error"] / sku_qty).fillna(0)
 
@@ -464,6 +465,153 @@ def _select_output_columns(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = 0
     return df[output_columns].copy()
+
+
+def _get_athena_connection():
+    """
+    Create Athena connection using SSO profile.
+    Requires active SSO session (aws sso login --profile prod-ziyi.fang-406921510350).
+    """
+    import boto3
+    from pyathena import connect
+
+    load_dotenv(dotenv_path=Path(__file__).parent / ".env")
+    session = boto3.Session(profile_name="prod-ziyi.fang-406921510350")
+    credentials = session.get_credentials().get_frozen_credentials()
+
+    return connect(
+        aws_access_key_id=credentials.access_key,
+        aws_secret_access_key=credentials.secret_key,
+        aws_session_token=credentials.token,
+        region_name=os.getenv("ATHENA_REGION", "us-west-2"),
+        work_group=os.getenv("ATHENA_WORK_GROUP", "ziyi.fang"),
+        s3_staging_dir=os.getenv("ATHENA_S3_STAGING", "s3://aws-athena-query-results-us-west-2-654654218498/"),
+    )
+
+
+def _load_seller_am_from_athena() -> pd.DataFrame:
+    """
+    Load seller-AM mapping from Athena (yamibuy_central.admin_seller).
+    On success, caches to local CSV. On failure, reads from cache.
+
+    Returns DataFrame with columns: seller_id, user_id, am_name
+    """
+    cache_dir = Path(__file__).parent / "cache"
+    cache_file = cache_dir / "seller_am.csv"
+
+    # Try Athena
+    try:
+        athena_conn = _get_athena_connection()
+        df = pd.read_sql("""
+            SELECT a.seller_id, a.user_id, u.user_name AS am_name
+            FROM yamibuy_central.admin_seller a
+            LEFT JOIN yamibuy_master.xysc_admin_user u ON u.user_id = a.user_id
+        """, athena_conn)
+
+        # Cache to local CSV
+        cache_dir.mkdir(exist_ok=True)
+        df.to_csv(cache_file, index=False)
+        return df
+
+    except Exception:
+        # Fallback to cached CSV
+        if cache_file.exists():
+            return pd.read_csv(cache_file)
+        return pd.DataFrame(columns=["seller_id", "user_id", "am_name"])
+
+
+def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Load PM (for Vendor) and AM (for Seller) owner info.
+
+    Each vendor/seller gets exactly ONE owner assigned:
+    - Vendor: from po_pm_vendor + po_pm_team (domain-aware matching)
+      Logic: match vendor's team (Food/Non-food) to PM's domain (0=Food, 1=Non-food)
+      Priority: is_primary=1 in matching domain > any PM in matching domain > is_primary=1 any domain > first PM
+    - Seller: from Athena admin_seller (real-time, with CSV cache fallback)
+
+    Adds column: pm_am (str) — the single PM or AM name
+    """
+    df["pm_am"] = ""
+
+    with engine.connect() as conn:
+        # --- Vendor PM (domain-aware) ---
+        vendor_ids = df.loc[df["business_type"] == "Vendor", "vendor_id"].unique()
+        if len(vendor_ids) > 0:
+            # Join po_pm_vendor + im_pm + po_pm_team to get domain info
+            pm_df = pd.read_sql(text("""
+                SELECT pv.vendor_id, pm.PM_name AS pm_name, pv.is_primary, pt.domain
+                FROM yamibuy_po.po_pm_vendor pv
+                JOIN yamibuy_im.im_pm pm ON pm.PM_id = CAST(pv.pm_id AS CHAR)
+                LEFT JOIN yamibuy_po.po_pm_team pt ON pt.pm_id = pm.PM_id AND pt.deleted = 0
+                WHERE pv.deleted = 0 AND pm.status = 'A'
+            """), conn)
+
+            if not pm_df.empty:
+                # Deduplicate (LEFT JOIN on po_pm_team can produce dupes if PM has multiple team rows)
+                pm_df = pm_df.drop_duplicates(subset=["vendor_id", "pm_name", "domain"])
+
+                vendor_mask = df["business_type"] == "Vendor"
+                # Map team to domain: Food→0, Non-food→1
+                team_to_domain = {"Food": 0, "Non-food": 1, "Other": None}
+
+                for vid in df.loc[vendor_mask, "vendor_id"].unique():
+                    vid_rows = pm_df[pm_df["vendor_id"] == vid]
+                    if vid_rows.empty:
+                        continue
+
+                    # Get this vendor's team/domain
+                    vendor_team = df.loc[vendor_mask & (df["vendor_id"] == vid), "team"].iloc[0]
+                    target_domain = team_to_domain.get(vendor_team)
+
+                    pm_name = None
+
+                    if target_domain is not None:
+                        # 1. Primary PM in matching domain
+                        match = vid_rows[(vid_rows["domain"] == target_domain) & (vid_rows["is_primary"] == 1)]
+                        if not match.empty:
+                            pm_name = match.iloc[0]["pm_name"]
+                        else:
+                            # 2. Any PM in matching domain
+                            match = vid_rows[vid_rows["domain"] == target_domain]
+                            if not match.empty:
+                                pm_name = sorted(match["pm_name"].unique())[0]
+
+                    if pm_name is None:
+                        # 3. Primary PM in any domain
+                        match = vid_rows[vid_rows["is_primary"] == 1]
+                        if not match.empty:
+                            pm_name = match.iloc[0]["pm_name"]
+                        else:
+                            # 4. First PM alphabetically
+                            pm_name = sorted(vid_rows["pm_name"].unique())[0]
+
+                    df.loc[vendor_mask & (df["vendor_id"] == vid), "pm_am"] = pm_name
+
+            # Fallback for vendors with no PM record at all
+            no_pm_mask = vendor_mask & ((df["pm_am"] == "") | df["pm_am"].isna())
+            if no_pm_mask.any():
+                df.loc[no_pm_mask & (df["team"] == "Food"), "pm_am"] = "janelle.zhang"
+                df.loc[no_pm_mask & (df["team"] == "Non-food"), "pm_am"] = "jillian.ji"
+                df.loc[no_pm_mask & (df["team"] == "Other"), "pm_am"] = "janelle.zhang"
+
+    # --- Seller AM (Athena live query with CSV cache fallback) ---
+    seller_ids = df.loc[df["business_type"] == "Seller", "vendor_id"].unique()
+    if len(seller_ids) > 0:
+        am_df = _load_seller_am_from_athena()
+        if not am_df.empty:
+            am_df = am_df.dropna(subset=["seller_id", "am_name"])
+            am_df["seller_id"] = am_df["seller_id"].astype(int)
+            seller_mask = df["business_type"] == "Seller"
+            for sid in df.loc[seller_mask, "vendor_id"].unique():
+                sid_rows = am_df[am_df["seller_id"] == sid]
+                if sid_rows.empty:
+                    continue
+                # Pick the first AM name
+                am_name = sorted(sid_rows["am_name"].unique())[0]
+                df.loc[seller_mask & (df["vendor_id"] == sid), "pm_am"] = am_name
+
+    return df
 
 
 def load_data_from_db(
@@ -533,6 +681,13 @@ def load_data_from_db(
 
     # Select final output columns
     df = _select_output_columns(df)
+
+    # Load owner (PM for Vendor, AM for Seller)
+    try:
+        df = _load_owner_info(engine, df)
+    except Exception:
+        # If owner lookup fails, just add empty column
+        df["pm_am"] = ""
 
     # Ensure proper types
     df["vendor_id"] = df["vendor_id"].astype(int)

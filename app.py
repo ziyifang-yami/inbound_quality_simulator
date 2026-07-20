@@ -605,8 +605,8 @@ else:
         if filtered_df.empty:
             st.info("No records match the current filter criteria.")
         else:
-            # Search bars and display mode on the same row
-            search_id_col, search_name_col, mode_col = st.columns([1, 2, 3])
+            # Search bars, active checkbox, owner search, and display mode on one row
+            search_id_col, search_name_col, active_col, search_owner_col, mode_col = st.columns([1, 2, 0.8, 2, 3])
             with search_id_col:
                 search_id = st.text_input(
                     "Vendor/Seller ID",
@@ -619,9 +619,21 @@ else:
                     placeholder="Partial name...",
                     key="detail_search_name",
                 )
+            with active_col:
+                st.write("")  # spacing to align with text inputs
+                st.write("")  # extra spacing
+                active_only = st.checkbox("Active only", value=True, key="detail_active_only")
+            with search_owner_col:
+                search_owner = st.text_input(
+                    "Owner (PM/AM)",
+                    placeholder="Partial owner...",
+                    key="detail_search_owner",
+                )
             with mode_col:
+                st.write("")  # spacing to align
+                st.write("")  # extra spacing
                 display_mode = st.radio(
-                    "mode",
+                    "Display mode",
                     options=["Score", "Percentage", "Actual Cases"],
                     horizontal=True,
                     key="detail_display_mode",
@@ -630,6 +642,13 @@ else:
 
             # Apply search filters
             display_filtered_df = filtered_df.copy()
+
+            # Active only: filter vendors/sellers that have at least one owner assigned
+            if active_only:
+                display_filtered_df = display_filtered_df[
+                    display_filtered_df["pm_am"] != ""
+                ]
+
             if search_id:
                 display_filtered_df = display_filtered_df[
                     display_filtered_df["vendor_id"].astype(str) == search_id.strip()
@@ -638,6 +657,11 @@ else:
                 display_filtered_df = display_filtered_df[
                     display_filtered_df["vendor_name"].str.contains(search_name, case=False, na=False)
                 ]
+            if search_owner:
+                # Match against pm_am column
+                owner_kw = search_owner.strip().lower()
+                owner_match = display_filtered_df["pm_am"].str.lower().str.contains(owner_kw, na=False)
+                display_filtered_df = display_filtered_df[owner_match]
 
             st.caption(f"Showing {len(display_filtered_df)} records. Click column headers to sort.")
 
@@ -649,6 +673,7 @@ else:
                 "vendor_id",
                 "business_type",
                 "team",
+                "pm_am",
             ]
 
             # Build rename map for base columns
@@ -660,11 +685,12 @@ else:
                 "qty_received": "Qty Received (units)",
                 "total_score": "Score",
                 "tier": "Tier",
+                "pm_am": "PM/AM",
             }
 
             if display_mode == "Score":
                 # Show grade columns (100/80/60/20)
-                criteria_cols = [f"grade_{c}" for c in CRITERIA_NAMES]
+                criteria_cols = ["qty_received"] + [f"grade_{c}" for c in CRITERIA_NAMES]
                 for criteria in CRITERIA_NAMES:
                     col_name = f"grade_{criteria}"
                     display_name = CRITERIA_DISPLAY.get(criteria, criteria)
@@ -672,7 +698,7 @@ else:
 
             elif display_mode == "Percentage":
                 # Show rate columns as percentages
-                criteria_cols = []
+                criteria_cols = ["qty_received"]
                 for criteria in CRITERIA_NAMES:
                     if criteria == "responsiveness":
                         criteria_cols.append("responsiveness_days")
@@ -733,12 +759,8 @@ else:
                 ).drop(columns=["_tier_rank"])
 
             # Determine number of pinned (frozen) columns based on display mode
-            # Score/Percentage: freeze up to Team (6 cols)
-            # Actual Cases: freeze up to Qty Received (7 cols)
-            if display_mode == "Actual Cases":
-                num_pinned = 7
-            else:
-                num_pinned = 6
+            # All modes: Tier, Score, Name, ID, Type, Team, PM/AM, Qty = 8
+            num_pinned = 8
 
             # Use AgGrid for frozen (pinned) left columns
             gb = GridOptionsBuilder.from_dataframe(detail_df)
@@ -752,6 +774,7 @@ else:
                 "ID": 60,
                 "Type": 70,
                 "Team": 80,
+                "PM/AM": 130,
                 "Qty Received (units)": 110,
             }
             for i, col in enumerate(detail_df.columns[:num_pinned]):
