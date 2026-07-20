@@ -532,7 +532,7 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
                 df.loc[no_pm_mask & (df["team"] == "Non-food"), "pm_am"] = "jillian.ji"
                 df.loc[no_pm_mask & (df["team"] == "Other"), "pm_am"] = "janelle.zhang"
 
-    # --- Seller AM (from local CSV cache) ---
+    # --- Seller AM (from local CSV cache — sourced from dwb_bi_vendor_region_info) ---
     seller_ids = df.loc[df["business_type"] == "Seller", "vendor_id"].unique()
     if len(seller_ids) > 0:
         cache_file = Path(__file__).parent / "cache" / "seller_am.csv"
@@ -545,7 +545,7 @@ def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
                 sid_rows = am_df[am_df["seller_id"] == sid]
                 if sid_rows.empty:
                     continue
-                am_name = sorted(sid_rows["am_name"].unique())[0]
+                am_name = sid_rows.iloc[0]["am_name"]
                 df.loc[seller_mask & (df["vendor_id"] == sid), "pm_am"] = am_name
 
     return df
