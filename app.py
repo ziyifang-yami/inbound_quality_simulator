@@ -162,7 +162,7 @@ def _apply_filters(df: pd.DataFrame) -> pd.DataFrame:
 # Main Area: Title and Tabs
 # ---------------------------------------------------------------------------
 
-st.title("📊 Inbound Quality Score Viewer")
+st.title("📊 Inbound Quality Dashboard")
 
 if st.session_state.scored_df is None:
     st.info(
@@ -362,7 +362,7 @@ else:
             st.info("No records match the current filter criteria.")
         else:
             # Search bars and display mode on the same row
-            search_id_col, search_name_col, mode_col = st.columns([1, 2, 3])
+            search_id_col, search_name_col, search_pm_col, mode_col = st.columns([1, 2, 1.5, 3])
             with search_id_col:
                 search_id = st.text_input(
                     "Vendor/Seller ID",
@@ -375,7 +375,20 @@ else:
                     placeholder="Partial name...",
                     key="detail_search_name",
                 )
+            with search_pm_col:
+                # Build PM/AM dropdown from available data
+                pm_am_options = ["All"] + sorted(
+                    filtered_df["pm_am"].dropna().loc[filtered_df["pm_am"] != ""].unique().tolist()
+                )
+                selected_pm = st.selectbox(
+                    "PM/AM",
+                    options=pm_am_options,
+                    index=0,
+                    key="detail_filter_pm_am",
+                )
             with mode_col:
+                st.write("")  # spacing to align
+                st.write("")  # extra spacing
                 display_mode = st.radio(
                     "mode",
                     options=["Score", "Percentage", "Actual Cases"],
@@ -394,6 +407,10 @@ else:
                 display_filtered_df = display_filtered_df[
                     display_filtered_df["vendor_name"].str.contains(search_name, case=False, na=False)
                 ]
+            if selected_pm != "All":
+                display_filtered_df = display_filtered_df[
+                    display_filtered_df["pm_am"] == selected_pm
+                ]
 
             st.caption(f"Showing {len(display_filtered_df)} records. Click column headers to sort.")
 
@@ -405,6 +422,7 @@ else:
                 "vendor_id",
                 "business_type",
                 "team",
+                "pm_am",
             ]
 
             # Build rename map for base columns
@@ -416,6 +434,7 @@ else:
                 "qty_received": "Qty Received (units)",
                 "total_score": "Score",
                 "tier": "Tier",
+                "pm_am": "PM/AM",
             }
 
             if display_mode == "Score":
@@ -490,9 +509,9 @@ else:
 
             # Determine number of pinned (frozen) columns based on display mode
             if display_mode == "Actual Cases":
-                num_pinned = 7
+                num_pinned = 8
             else:
-                num_pinned = 6
+                num_pinned = 7
 
             # Use AgGrid for frozen (pinned) left columns
             gb = GridOptionsBuilder.from_dataframe(detail_df)
@@ -506,6 +525,7 @@ else:
                 "ID": 60,
                 "Type": 70,
                 "Team": 80,
+                "PM/AM": 130,
                 "Qty Received (units)": 110,
             }
             for i, col in enumerate(detail_df.columns[:num_pinned]):

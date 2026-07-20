@@ -85,7 +85,7 @@ DEFAULT_THRESHOLDS = {
 
 # Tier classification boundaries (score >= boundary → assigned that tier)
 # A > B > C; score < C → Tier D
-DEFAULT_TIER_BOUNDARIES = {'A': 95, 'B': 80, 'C': 60}
+DEFAULT_TIER_BOUNDARIES = {'A': 95, 'B': 80, 'C': 65}
 
 # Required columns for CSV import validation
 REQUIRED_CSV_COLUMNS = [

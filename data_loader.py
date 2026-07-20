@@ -466,6 +466,91 @@ def _select_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df[output_columns].copy()
 
 
+def _load_owner_info(engine, df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Load PM (for Vendor) and AM (for Seller) owner info.
+
+    Each vendor/seller gets exactly ONE owner assigned:
+    - Vendor: from po_pm_vendor + po_pm_team (domain-aware matching)
+      Logic: match vendor's team (Food/Non-food) to PM's domain (0=Food, 1=Non-food)
+      Priority: is_primary=1 in matching domain > any PM in matching domain > is_primary=1 any domain > first PM
+    - Seller: from local CSV cache (seller_am.csv)
+
+    Adds column: pm_am (str) — the single PM or AM name
+    """
+    df["pm_am"] = ""
+
+    with engine.connect() as conn:
+        # --- Vendor PM (domain-aware) ---
+        vendor_ids = df.loc[df["business_type"] == "Vendor", "vendor_id"].unique()
+        if len(vendor_ids) > 0:
+            pm_df = pd.read_sql(text("""
+                SELECT pv.vendor_id, pm.PM_name AS pm_name, pv.is_primary, pt.domain
+                FROM yamibuy_po.po_pm_vendor pv
+                JOIN yamibuy_im.im_pm pm ON pm.PM_id = CAST(pv.pm_id AS CHAR)
+                LEFT JOIN yamibuy_po.po_pm_team pt ON pt.pm_id = pm.PM_id AND pt.deleted = 0
+                WHERE pv.deleted = 0 AND pm.status = 'A'
+            """), conn)
+
+            if not pm_df.empty:
+                pm_df = pm_df.drop_duplicates(subset=["vendor_id", "pm_name", "domain"])
+                vendor_mask = df["business_type"] == "Vendor"
+                team_to_domain = {"Food": 0, "Non-food": 1, "Other": None}
+
+                for vid in df.loc[vendor_mask, "vendor_id"].unique():
+                    vid_rows = pm_df[pm_df["vendor_id"] == vid]
+                    if vid_rows.empty:
+                        continue
+
+                    vendor_team = df.loc[vendor_mask & (df["vendor_id"] == vid), "team"].iloc[0]
+                    target_domain = team_to_domain.get(vendor_team)
+
+                    pm_name = None
+
+                    if target_domain is not None:
+                        match = vid_rows[(vid_rows["domain"] == target_domain) & (vid_rows["is_primary"] == 1)]
+                        if not match.empty:
+                            pm_name = match.iloc[0]["pm_name"]
+                        else:
+                            match = vid_rows[vid_rows["domain"] == target_domain]
+                            if not match.empty:
+                                pm_name = sorted(match["pm_name"].unique())[0]
+
+                    if pm_name is None:
+                        match = vid_rows[vid_rows["is_primary"] == 1]
+                        if not match.empty:
+                            pm_name = match.iloc[0]["pm_name"]
+                        else:
+                            pm_name = sorted(vid_rows["pm_name"].unique())[0]
+
+                    df.loc[vendor_mask & (df["vendor_id"] == vid), "pm_am"] = pm_name
+
+            # Fallback for vendors with no PM record at all
+            no_pm_mask = vendor_mask & ((df["pm_am"] == "") | df["pm_am"].isna())
+            if no_pm_mask.any():
+                df.loc[no_pm_mask & (df["team"] == "Food"), "pm_am"] = "janelle.zhang"
+                df.loc[no_pm_mask & (df["team"] == "Non-food"), "pm_am"] = "jillian.ji"
+                df.loc[no_pm_mask & (df["team"] == "Other"), "pm_am"] = "janelle.zhang"
+
+    # --- Seller AM (from local CSV cache) ---
+    seller_ids = df.loc[df["business_type"] == "Seller", "vendor_id"].unique()
+    if len(seller_ids) > 0:
+        cache_file = Path(__file__).parent / "cache" / "seller_am.csv"
+        if cache_file.exists():
+            am_df = pd.read_csv(cache_file)
+            am_df = am_df.dropna(subset=["seller_id", "am_name"])
+            am_df["seller_id"] = am_df["seller_id"].astype(int)
+            seller_mask = df["business_type"] == "Seller"
+            for sid in df.loc[seller_mask, "vendor_id"].unique():
+                sid_rows = am_df[am_df["seller_id"] == sid]
+                if sid_rows.empty:
+                    continue
+                am_name = sorted(sid_rows["am_name"].unique())[0]
+                df.loc[seller_mask & (df["vendor_id"] == sid), "pm_am"] = am_name
+
+    return df
+
+
 def load_data_from_db(
     start_date: date | None = None,
     end_date: date | None = None,
@@ -533,6 +618,12 @@ def load_data_from_db(
 
     # Select final output columns
     df = _select_output_columns(df)
+
+    # Load owner (PM for Vendor, AM for Seller)
+    try:
+        df = _load_owner_info(engine, df)
+    except Exception:
+        df["pm_am"] = ""
 
     # Ensure proper types
     df["vendor_id"] = df["vendor_id"].astype(int)
