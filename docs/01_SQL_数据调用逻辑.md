@@ -3,7 +3,7 @@
 > **项目**: Inbound Quality Score Simulator  
 > **数据源**: MySQL (rds.g3.yamibuy.net) + AWS Athena  
 > **时间窗口**: 默认过去 180 天  
-> **文档更新**: 2026-07-13
+> **文档更新**: 2026-07-20
 
 ---
 
@@ -38,12 +38,14 @@
 | yamibuy_po | `po_purchase_order` | PO 采购单（关联 vendor_id）|
 | yamibuy_po | `po_vendor` | Vendor 主数据（vendor_name）|
 | yamibuy_po | `po_pm_vendor` | Vendor-PM 关系表 |
+| yamibuy_po | `po_pm_team` | PM 的 domain 分组 (0=Food, 1=Non-food) |
 | yamibuy_im | `im_item` | 商品主数据 |
 | yamibuy_im | `im_category` | 品类层级（用于 Food/Non-food 分组）|
 | yamibuy_im | `im_pm` | PM 信息表 |
-| yamibuy_master | `xysc_vendor_info` | Seller 主数据（vendor_name）|
-| yamibuy_central (Athena) | `admin_seller` | Seller-AM 关系表 |
-| yamibuy_master (Athena) | `xysc_admin_user` | 管理员用户（AM name）|
+| yamibuy_master | `xysc_vendor_info` | Seller 主数据（vendor_name, is_active）|
+| dwb_bi (Athena) | `dwb_bi_vendor_region_info` | Seller-AM 主映射表（"2024_am" 字段）|
+| yamibuy_central (Athena) | `admin_seller` | Seller-AM 补充关系表 |
+| yamibuy_master (Athena) | `xysc_admin_user` | 管理员用户（AM name, is_active）|
 
 ---
 
@@ -290,23 +292,41 @@ GROUP BY bpm.vendor_id
 
 ### 3.9 Vendor PM 关系查询 (`_load_owner_info`)
 
+**Domain-aware 匹配逻辑** (2026-07-20 更新):
+- JOIN `po_pm_team` 获取 PM 的 domain (0=Food, 1=Non-food)
+- 优先匹配 vendor team 对应 domain 下的 primary PM
+- Fallback: Food→janelle.zhang, Non-food→jillian.ji
+
 ```sql
-SELECT pmv.vendor_id, pm.PM_name AS pm_name, pmv.is_primary
-FROM yamibuy_po.po_pm_vendor pmv
-JOIN yamibuy_im.im_pm pm ON pm.PM_id = CAST(pmv.pm_id AS CHAR)
-WHERE pm.status = 'A'
-  AND pmv.deleted = 0
+SELECT pv.vendor_id, pm.PM_name AS pm_name, pv.is_primary, pt.domain
+FROM yamibuy_po.po_pm_vendor pv
+JOIN yamibuy_im.im_pm pm ON pm.PM_id = CAST(pv.pm_id AS CHAR)
+LEFT JOIN yamibuy_po.po_pm_team pt ON pt.pm_id = pm.PM_id AND pt.deleted = 0
+WHERE pv.deleted = 0 AND pm.status = 'A'
 ```
 
 ---
 
 ### 3.10 Seller AM 关系查询 (Athena)
 
+**主源**: `dwb_bi.dwb_bi_vendor_region_info` (与 Tableau 一致)
 ```sql
-SELECT a.seller_id, a.user_id, u.user_name AS am_name
-FROM yamibuy_central.admin_seller a
-LEFT JOIN yamibuy_master.xysc_admin_user u ON u.user_id = a.user_id
+SELECT CAST(vendor_id AS INTEGER) AS seller_id,
+       lower(trim("2024_am")) AS am_name
+FROM dwb_bi.dwb_bi_vendor_region_info
+WHERE "2024_am" IS NOT NULL AND trim("2024_am") != ''
 ```
+
+**补充源**: `admin_seller` (填补主源缺失的 seller, is_active=1 only)
+```sql
+SELECT CAST(a.seller_id AS INTEGER) AS seller_id,
+       lower(trim(u.user_name)) AS am_name
+FROM yamibuy_central.admin_seller a
+JOIN yamibuy_master.xysc_admin_user u ON u.user_id = a.user_id
+WHERE u.is_active = 1
+```
+
+AM 名字统一为 first name（如 `jax.qian` → `jax`）。
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **项目**: Inbound Quality Score Simulator  
 > **当前版本**: v1.0 (2026-06-12 初始发布)  
-> **文档更新**: 2026-07-13
+> **文档更新**: 2026-07-20
 
 ---
 
@@ -40,11 +40,23 @@ Simulator 是一个 Streamlit 仪表板，用于评估 Vendor/Seller 的入库�
 - [x] 日期选择器触发 DB reload
 - [x] Owner (PM/AM) 展示
 
+### ✅ Phase 1.3 — PM/AM 精准匹配 + Tier 调整 (2026-07-20)
+- [x] Tier C 边界从 60 上调至 **65**
+- [x] Vendor PM: Domain-aware 匹配（po_pm_vendor + po_pm_team，按 Food/Non-food domain 精准匹配 primary PM）
+- [x] Seller AM: 改用 `dwb_bi.dwb_bi_vendor_region_info` 作为主源（与 Tableau 一致），`admin_seller` 作为补充
+- [x] AM 名字统一为 first name（消除 last name 不一致问题）
+- [x] PM/AM 合并为单一列（只显示一个负责人）
+- [x] Active Only 筛选（Vendor: po_vendor.status='A', Seller: xysc_vendor_info.is_active=1）
+- [x] PM/AM 下拉筛选器（Dashboard）
+- [x] 独立计算脚本上传 Google Drive（Vendor-only + Full 版本）
+- [x] Inbound Quality Dashboard (port 8503) 只读版上线
+
 ---
 
 ## 3. 当前进行中
 
 ### 🔄 Phase 2 — 数据准确性与完整性
+- [x] PM/AM 映射精准度提升（已完成，移至 Phase 1.3）
 - [ ] 验证 `spec_image_error` 数据源准确性（weight_error vs image_error 字段含义确认）
 - [ ] 分析 BPM `problem_type` 编码与实际场景对应关系的完整性
 - [ ] 确认 QC `comment LIKE '%poor quality%'` 的覆盖率
@@ -148,6 +160,8 @@ Simulator 是一个 Streamlit 仪表板，用于评估 Vendor/Seller 的入库�
 ---
 
 ## 8. 评分参数变更管理
+
+**当前 Tier 边界**: A ≥ 95, B ≥ 80, **C ≥ 65** (2026-07-20 从 60 上调至 65), D < 65
 
 **当前流程**:
 1. Ops 团队在 [Google Sheet](https://docs.google.com/spreadsheets/d/1HNEzs65WF03vaEY1flrb9vOHJJHBID30QSo_-ybU6sE/edit?gid=338232131#gid=338232131) 维护 criteria 权重和阈值

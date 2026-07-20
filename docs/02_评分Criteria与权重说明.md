@@ -1,7 +1,7 @@
 # 评分 Criteria 与权重说明
 
 > **来源**: [Google Sheet - Ops 入库质量 Criteria Details](https://docs.google.com/spreadsheets/d/1HNEzs65WF03vaEY1flrb9vOHJJHBID30QSo_-ybU6sE/edit?gid=338232131#gid=338232131)  
-> **文档更新**: 2026-07-13
+> **文档更新**: 2026-07-20
 
 ---
 
@@ -149,8 +149,8 @@ total_score = 100×15% + 100×15% + 100×15% + 100×5% + 100×10%
 |:----:|------|------|
 | A | score ≥ 95 | 优质供应商 |
 | B | 80 ≤ score < 95 | 良好供应商 |
-| C | 60 ≤ score < 80 | 需改进供应商 |
-| D | score < 60 | 高风险供应商 |
+| C | 65 ≤ score < 80 | 需改进供应商 |
+| D | score < 65 | 高风险供应商 |
 
 ---
 
