@@ -401,7 +401,7 @@ else:
 
             # Apply search filters
             display_filtered_df = filtered_df.copy()
-            if active_only:
+            if active_only and "is_active" in display_filtered_df.columns:
                 display_filtered_df = display_filtered_df[
                     display_filtered_df["is_active"] == True
                 ]
@@ -429,6 +429,7 @@ else:
                 "business_type",
                 "team",
                 "pm_am",
+                "qty_received",
             ]
 
             # Build rename map for base columns
@@ -465,8 +466,8 @@ else:
                         rename_map[col] = f"{display_name} (%)"
 
             else:  # Actual Cases
-                # Show raw numerator quantities + qty_received as context
-                criteria_cols = ["qty_received"]
+                # Show raw numerator quantities
+                criteria_cols = []
                 qty_col_map = {
                     "overage": "overage_qty",
                     "damage": "damage_qty",
@@ -513,11 +514,8 @@ else:
                     ["_tier_rank", "Score"], ascending=[True, False]
                 ).drop(columns=["_tier_rank"])
 
-            # Determine number of pinned (frozen) columns based on display mode
-            if display_mode == "Actual Cases":
-                num_pinned = 8
-            else:
-                num_pinned = 7
+            # Determine number of pinned (frozen) columns
+            num_pinned = 8  # Tier, Score, Name, ID, Type, Team, PM/AM, Qty Received
 
             # Use AgGrid for frozen (pinned) left columns
             gb = GridOptionsBuilder.from_dataframe(detail_df)
